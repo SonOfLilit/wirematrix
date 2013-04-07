@@ -10,13 +10,14 @@ time, the user learns to "see the matrix" in the encoded stream.
 import sys
 import random
 
-import pcap
-
+import numpy
+import scipy.ndimage
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
-import cairo
+import cairocffi as cairo
 
+import pcap
 from pyhack import GLHack
 
 
@@ -105,11 +106,15 @@ GLYPH_H = 16
 class Matrix(object):
     def __init__(self, w, h):
         self.w, self.h = w, h
-        self.data = (ctypes.c_ubyte * self.w * self.h * 4)()
-        stride = self.w * 4
-        self.surface = cairo.ImageSurface.create_for_data(self.data, cairo.FORMAT_ARGB32,
-                                                          self.w, self.h, stride)
+        self.data = numpy.zeros((self.h, self.w, 4), "byte")
+        print len(self.data)
+        self.surface = cairo.ImageSurface.create_for_data(
+            self.data.data, cairo.FORMAT_ARGB32,self.w, self.h)
 
+        single_dot = numpy.zeros((5, 5, 4))
+        single_dot[2][2] = 1.0
+        self.fade_kernel = scipy.ndimage.gaussian_filter(single_dot, 5)
+        
         self.messages = {}
 
     def column(self, binary):
@@ -126,32 +131,43 @@ class Matrix(object):
                 del self.messages[message.x]
 
     def render(self):
-        ctx = cairo.Context(self.surface)
-        ctx.set_source_rgb(0, 0, 0)
-        ctx.paint()
+        self.fade()
+        self.write_glyphs()
 
+    def fade(self):
+        self.data[:] = scipy.ndimage.convolve(self.data, self.fade_kernel)
+
+    def write_glyphs(self):
+        ctx = cairo.Context(self.surface)
+        ctx.set_operator(cairo.OPERATOR_SCREEN)
         ctx.select_font_face("cairo:monospace")
-        ctx.set_source_rgb(0, 255, 0)
         ctx.set_font_size(14)
         
+        highlights = []
+        ctx.set_source_rgb(0, 255, 0)
         for message in self.messages.itervalues():
-            ctx.show_glyphs(message.glyphs())
+            glyphs = message.glyphs()
+            ctx.show_glyphs(glyphs)
+            highlights.append(glyphs[-1])
+        ctx.set_source_rgb(200, 255, 200)
+        ctx.show_glyphs(highlights)
+        
 
 class Message(object):
     def __init__(self, binary, x, w, h):
         self.binary = map(ord, binary)
         self.x = x
         # begin just above screen
-        self.y0 = -len(self.binary)
+        self.y0 = random.randrange(h / GLYPH_H / 2)
         # settle somewhere in the upper half of the screen
-        self.final_y0 = random.randrange(h / GLYPH_H / 2)
-        self.ttl = 16
+        self.len_exposed = 1
+        self.ttl = 1
         self.screen_end_y = h / GLYPH_H
 
     def tick(self):
-        if self.y0 < self.final_y0:
-            self.y0 += 1
-        elif self.y0 == self.final_y0 and self.ttl > 0:
+        if self.len_exposed < len(self.binary):
+            self.len_exposed += 1
+        elif self.ttl > 0:
             self.ttl -= 1
         else:
             self.y0 += 1
@@ -159,7 +175,7 @@ class Message(object):
         
     def glyphs(self):
         return [(GLYPHS[c], GLYPH_W * self.x, GLYPH_H * (self.y0 + i))
-                for i, c in enumerate(self.binary)]
+                for i, c in enumerate(self.binary[:self.len_exposed])]
 
 
 if __name__ == "__main__":
