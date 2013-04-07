@@ -11,7 +11,6 @@ import sys
 import random
 
 import numpy
-import scipy.ndimage
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
@@ -106,15 +105,10 @@ GLYPH_H = 16
 class Matrix(object):
     def __init__(self, w, h):
         self.w, self.h = w, h
-        self.data = numpy.zeros((self.h, self.w, 4), "byte")
-        print len(self.data)
+        self.data = ctypes.create_string_buffer(self.h * self.w * 4)
         self.surface = cairo.ImageSurface.create_for_data(
-            self.data.data, cairo.FORMAT_ARGB32,self.w, self.h)
+            self.data, cairo.FORMAT_ARGB32,self.w, self.h)
 
-        single_dot = numpy.zeros((5, 5, 4))
-        single_dot[2][2] = 1.0
-        self.fade_kernel = scipy.ndimage.gaussian_filter(single_dot, 5)
-        
         self.messages = {}
 
     def column(self, binary):
@@ -131,14 +125,10 @@ class Matrix(object):
                 del self.messages[message.x]
 
     def render(self):
-        self.fade()
-        self.write_glyphs()
-
-    def fade(self):
-        self.data[:] = scipy.ndimage.convolve(self.data, self.fade_kernel)
-
-    def write_glyphs(self):
         ctx = cairo.Context(self.surface)
+        ctx.set_source_rgb(0, 0, 0)
+        ctx.paint()
+
         ctx.set_operator(cairo.OPERATOR_SCREEN)
         ctx.select_font_face("cairo:monospace")
         ctx.set_font_size(14)
